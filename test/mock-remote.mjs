@@ -1,5 +1,6 @@
 // A stand-in for the hosted QRX MCP server: stateless Streamable HTTP, bearer-key auth on account tools,
 // an MCP Apps view resource, and switches for dropping connections.
+import { webcrypto } from 'node:crypto';
 import { createServer } from 'node:http';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
@@ -9,6 +10,9 @@ import {
   ListToolsRequestSchema,
   ReadResourceRequestSchema,
 } from '@modelcontextprotocol/sdk/types.js';
+
+// Node 18 has no global crypto, which the SDK's HTTP server transport uses.
+globalThis.crypto ??= webcrypto;
 
 export const API_KEY = 'qrx_test_key';
 export const UI_EXTENSION = 'io.modelcontextprotocol/ui';
