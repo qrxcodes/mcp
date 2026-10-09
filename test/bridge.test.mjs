@@ -1,0 +1,173 @@
+// Runs the built CLI over stdio against a mock remote server.
+import assert from 'node:assert/strict';
+import { after, before, describe, test } from 'node:test';
+import { fileURLToPath } from 'node:url';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { ResultSchema } from '@modelcontextprotocol/sdk/types.js';
+import { API_KEY, INSTRUCTIONS, SERVER_INFO, TOOLS, UI_EXTENSION, VIEW, VIEW_CONTENTS, startMockRemote } from './mock-remote.mjs';
+
+const CLI = fileURLToPath(new URL('../dist/index.js', import.meta.url));
+const APP_CAPABILITIES = { extensions: { [UI_EXTENSION]: { mimeTypes: ['text/html;profile=mcp-app'] } } };
+
+let remote;
+before(async () => {
+  remote = await startMockRemote();
+});
+after(async () => {
+  await remote.close();
+});
+
+async function connect({ apiKey, capabilities = {}, url = remote.url } = {}) {
+  const env = { PATH: process.env.PATH ?? '', SYSTEMROOT: process.env.SYSTEMROOT ?? '', QRX_MCP_URL: url };
+  if (apiKey !== undefined) env.QRX_API_KEY = apiKey;
+  const transport = new StdioClientTransport({ command: process.execPath, args: [CLI], env, stderr: 'pipe' });
+  let stderr = '';
+  transport.stderr?.on('data', (chunk) => (stderr += chunk));
+  const client = new Client({ name: 'test-client', version: '1.0.0' }, { capabilities });
+  await client.connect(transport);
+  return { client, stderr: () => stderr };
+}
+
+// Raw requests, so the comparison sees exactly what the bridge sent rather than what the SDK's schemas keep.
+const raw = (client, method, params = {}, options) => client.request({ method, params }, ResultSchema, options);
+const lastRemoteRequest = (method) => remote.state.requests.filter((r) => r.method === method).at(-1);
+
+describe('with an API key', () => {
+  let client;
+  before(async () => {
+    ({ client } = await connect({ apiKey: API_KEY, capabilities: APP_CAPABILITIES }));
+  });
+  after(async () => {
+    await client.close();
+  });
+
+  test('passes the remote server info, instructions and capabilities through', () => {
+    const info = client.getServerVersion();
+    assert.equal(info.name, SERVER_INFO.name);
+    assert.equal(info.title, SERVER_INFO.title);
+    assert.equal(info.version, SERVER_INFO.version);
+    assert.deepEqual(info.icons, SERVER_INFO.icons);
+    assert.equal(client.getInstructions(), INSTRUCTIONS);
+    assert.deepEqual(client.getServerCapabilities().extensions, APP_CAPABILITIES.extensions);
+  });
+
+  test('forwards the client capabilities and the key to the remote', () => {
+    const init = lastRemoteRequest('initialize');
+    assert.deepEqual(init.params.capabilities.extensions, APP_CAPABILITIES.extensions);
+    assert.match(init.params.clientInfo.name, /^test-client via qrx-mcp\//);
+    assert.equal(init.headers.authorization, `Bearer ${API_KEY}`);
+  });
+
+  test('lists tools with schemas, annotations and _meta unchanged', async () => {
+    const { tools } = await raw(client, 'tools/list');
+    assert.deepEqual(tools, TOOLS);
+  });
+
+  test('calls a tool and returns structuredContent', async () => {
+    const result = await client.callTool({ name: 'get_account', arguments: {} });
+    assert.equal(result.isError, undefined);
+    assert.deepEqual(result.structuredContent, { plan: 'Pro', remaining: 42 });
+  });
+
+  test('passes tool result _meta and progress notifications through', async () => {
+    const progress = [];
+    const result = await raw(
+      client,
+      'tools/call',
+      { name: 'generate_qr_code', arguments: { prompt: 'a lighthouse', destination: 'https://qrx.to/x' } },
+      { onprogress: (p) => progress.push(p) },
+    );
+    assert.deepEqual(result.structuredContent, { id: 'abc123', status: 'pending' });
+    assert.deepEqual(result._meta, { 'qrx/view': 'pending' });
+    assert.deepEqual(progress, [{ progress: 1, total: 2, message: 'Painting' }]);
+  });
+
+  test('lists and reads the MCP Apps view resource unchanged', async () => {
+    assert.deepEqual((await raw(client, 'resources/list')).resources, [VIEW]);
+    assert.deepEqual((await raw(client, 'resources/read', { uri: VIEW.uri })).contents, [VIEW_CONTENTS]);
+  });
+
+  test('passes remote JSON-RPC errors through with their code', async () => {
+    await assert.rejects(client.listPrompts(), (error) => {
+      assert.equal(error.code, -32601);
+      assert.doesNotMatch(error.message, /MCP error -32601: MCP error/);
+      return true;
+    });
+  });
+
+  test('reconnects after a dropped connection', async () => {
+    remote.state.dropNext = 1;
+    const { tools } = await raw(client, 'tools/list');
+    assert.equal(tools.length, TOOLS.length);
+    assert.equal(remote.state.dropped.at(-1), 'tools/list');
+  });
+
+  test('retries a read-only tool after a dropped connection', async () => {
+    remote.state.dropNext = 1;
+    const result = await client.callTool({ name: 'get_account', arguments: {} });
+    assert.deepEqual(result.structuredContent, { plan: 'Pro', remaining: 42 });
+    assert.equal(remote.state.dropped.at(-1), 'get_account');
+  });
+
+  test('does not retry a tool that changes things, but recovers on the next call', async () => {
+    remote.state.dropNext = 1;
+    const args = { name: 'generate_qr_code', arguments: { prompt: 'a lighthouse', destination: 'https://qrx.to/x' } };
+    const before = remote.state.requests.filter((r) => r.params?.name === 'generate_qr_code').length;
+    await assert.rejects(client.callTool(args), /Could not reach the QRX MCP server/);
+    const result = await client.callTool(args);
+    assert.deepEqual(result.structuredContent, { id: 'abc123', status: 'pending' });
+    const after = remote.state.requests.filter((r) => r.params?.name === 'generate_qr_code').length;
+    assert.equal(remote.state.dropped.at(-1), 'generate_qr_code');
+    assert.equal(after - before, 2, 'one failed attempt and one new call, no automatic retry');
+  });
+});
+
+describe('without an API key', () => {
+  let client;
+  let stderr;
+  before(async () => {
+    ({ client, stderr } = await connect());
+  });
+  after(async () => {
+    await client.close();
+  });
+
+  test('says so on stderr at startup', () => {
+    assert.match(stderr(), /QRX_API_KEY is not set/);
+  });
+
+  test('still lists tools and resources, and sends no key', async () => {
+    const { tools } = await raw(client, 'tools/list');
+    assert.deepEqual(tools, TOOLS);
+    assert.equal((await client.listResources()).resources.length, 1);
+    assert.equal(lastRemoteRequest('tools/list').headers.authorization, undefined);
+  });
+
+  test('runs tools that need no account', async () => {
+    const result = await client.callTool({ name: 'list_styles', arguments: {} });
+    assert.equal(result.isError, undefined);
+    assert.deepEqual(result.structuredContent, { styles: [{ id: 'a64c5', name: 'Anime' }] });
+  });
+
+  test('returns a clear tool error for tools that need a key', async () => {
+    const result = await client.callTool({ name: 'get_account', arguments: {} });
+    assert.equal(result.isError, true);
+    assert.match(result.content[0].text, /set it as QRX_API_KEY/);
+  });
+});
+
+test('reports a rejected key clearly', async () => {
+  const { client } = await connect({ apiKey: 'qrx_wrong' });
+  const result = await client.callTool({ name: 'get_account', arguments: {} });
+  assert.equal(result.isError, true);
+  assert.match(result.content[0].text, /rejected the API key in QRX_API_KEY/);
+  await client.close();
+});
+
+test('starts when the remote is unreachable and reports it on use', async () => {
+  const { client, stderr } = await connect({ apiKey: API_KEY, url: 'http://127.0.0.1:9/mcp' });
+  assert.match(stderr(), /could not reach/);
+  await assert.rejects(client.listTools(), /Could not reach the QRX MCP server/);
+  await client.close();
+});

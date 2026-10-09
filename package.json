@@ -1,0 +1,62 @@
+{
+  "name": "@qrxcodes/mcp",
+  "version": "1.0.0",
+  "description": "QRX MCP server for stdio clients: art QR codes that always scan. Bridges to the hosted QRX MCP server at qrx.codes/mcp.",
+  "mcpName": "codes.qrx/mcp",
+  "type": "module",
+  "bin": {
+    "qrx-mcp": "dist/index.js"
+  },
+  "main": "dist/bridge.js",
+  "types": "dist/bridge.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/bridge.d.ts",
+      "default": "./dist/bridge.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "!dist/**/*.test.*"
+  ],
+  "scripts": {
+    "build": "tsc -p .",
+    "test": "npm run build && node --test test/bridge.test.mjs",
+    "prepublishOnly": "npm run build && node --test test/bridge.test.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "qr-code",
+    "qr-code-generator",
+    "qr",
+    "ai-art",
+    "stdio",
+    "qrx"
+  ],
+  "homepage": "https://qrx.codes/developers/mcp",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/qrxcodes/mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/qrxcodes/mcp/issues"
+  },
+  "author": "QRX <hello@qrx.codes> (https://qrx.codes)",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "typescript": "^7.0.2"
+  }
+}
