@@ -1,6 +1,6 @@
 {
   "name": "@qrxcodes/mcp",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "QRX MCP server for stdio clients: art QR codes that always scan. Bridges to the hosted QRX MCP server at qrx.codes/mcp.",
   "mcpName": "codes.qrx/mcp",
   "type": "module",

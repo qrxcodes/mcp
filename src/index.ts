@@ -13,20 +13,26 @@ if (process.argv.includes('--version') || process.argv.includes('-v')) {
   process.exit(0);
 }
 
-let url: URL;
-try {
-  url = new URL(process.env.QRX_MCP_URL?.trim() || DEFAULT_URL);
-} catch {
-  log(`QRX_MCP_URL is not a valid URL: ${process.env.QRX_MCP_URL}`);
-  process.exit(1);
+function urlFromEnv(name: string, fallback?: string): URL | undefined {
+  const value = process.env[name]?.trim() || fallback;
+  if (!value) return undefined;
+  try {
+    return new URL(value);
+  } catch {
+    log(`${name} is not a valid URL: ${value}`);
+    process.exit(1);
+  }
 }
+
+const url = urlFromEnv('QRX_MCP_URL', DEFAULT_URL)!;
+const serverCardUrl = urlFromEnv('QRX_MCP_SERVER_CARD_URL');
 
 const apiKey = process.env.QRX_API_KEY?.trim() || undefined;
 if (!apiKey) {
-  log(`QRX_API_KEY is not set. Browsing tools and styles works; making or reading codes needs a key from ${KEYS_URL}`);
+  log(`QRX_API_KEY is not set. Clients can list the tools; using them needs a key from ${KEYS_URL}`);
 }
 
-const server = createBridge({ url, apiKey, version, log });
+const server = createBridge({ url, apiKey, serverCardUrl, version, log });
 const transport = new StdioServerTransport();
 
 const shutdown = () => {

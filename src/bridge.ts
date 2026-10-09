@@ -26,6 +26,7 @@ import {
   type ServerNotification,
   type ServerRequest,
 } from '@modelcontextprotocol/sdk/types.js';
+import { defaultServerCardUrl, loadCatalog, type Catalog } from './catalog.js';
 
 export const DEFAULT_URL = 'https://qrx.codes/mcp';
 export const KEYS_URL = 'https://qrx.codes/developers/keys';
@@ -33,8 +34,10 @@ export const KEYS_URL = 'https://qrx.codes/developers/keys';
 export interface BridgeOptions {
   /** The remote QRX MCP endpoint. */
   url: URL;
-  /** QRX API key, sent as a bearer token. Discovery and list_styles work without one. */
+  /** QRX API key, sent as a bearer token. Without one, or if the remote refuses it, the bridge lists from the public server card. */
   apiKey?: string;
+  /** The public server card. Defaults to /.well-known/mcp/server-card.json at the remote's origin. */
+  serverCardUrl?: URL;
   /** This package's version, reported to the remote server. */
   version: string;
   /** Diagnostics go here (stderr in the CLI; stdout belongs to the protocol). */
@@ -61,6 +64,8 @@ export function createBridge(options: BridgeOptions): Server {
   let clientInfo: Implementation = { name: 'qrx-mcp', version: options.version };
 
   let upstream: Promise<Client> | undefined;
+  // Set when the remote refuses to connect us: lists come from the public catalog and everything else needs a key.
+  let catalog: Catalog | undefined;
   // Tools the remote marks read-only; only these are retried after a dropped connection.
   const readOnlyTools = new Set<string>();
 
@@ -149,6 +154,7 @@ export function createBridge(options: BridgeOptions): Server {
   }
 
   async function forward(request: AnyRequest, extra: Extra): Promise<AnyResult> {
+    if (catalog) throw rpcError(-32001, authMessage(options.apiKey));
     try {
       return await send(request, extra);
     } catch (error) {
@@ -160,6 +166,7 @@ export function createBridge(options: BridgeOptions): Server {
     clientCapabilities = request.params.capabilities;
     clientInfo = request.params.clientInfo;
     reset();
+    catalog = undefined;
     const requested = request.params.protocolVersion;
     const protocolVersion = SUPPORTED_PROTOCOL_VERSIONS.includes(requested) ? requested : LATEST_PROTOCOL_VERSION;
     try {
@@ -172,8 +179,16 @@ export function createBridge(options: BridgeOptions): Server {
         ...(instructions ? { instructions } : {}),
       };
     } catch (error) {
+      const refused = isUnauthorized(error);
+      if (refused) log(`${options.url.href} refused ${options.apiKey ? 'the API key' : 'a connection without an API key'}`);
+      else log(`could not reach ${options.url.href}: ${errorMessage(error)}`);
+      if (refused || !options.apiKey) {
+        // Answer discovery from the public server card, so clients and directories can still list the tools.
+        catalog = await loadCatalog(options.serverCardUrl ?? defaultServerCardUrl(options.url), log);
+        const { serverInfo, capabilities, instructions } = catalog;
+        return { protocolVersion, capabilities, serverInfo, ...(instructions ? { instructions } : {}) };
+      }
       // Start anyway so the client can show a useful error on first use; requests retry the connection.
-      log(`could not reach ${options.url.href}: ${errorMessage(error)}`);
       return {
         protocolVersion,
         capabilities: { tools: {}, resources: {} },
@@ -183,6 +198,7 @@ export function createBridge(options: BridgeOptions): Server {
   });
 
   server.setRequestHandler(ListToolsRequestSchema, async (request, extra) => {
+    if (catalog) return { tools: catalog.tools };
     const result = await forward(request, extra);
     for (const tool of (result.tools ?? []) as { name: string; annotations?: { readOnlyHint?: boolean } }[]) {
       if (tool.annotations?.readOnlyHint) readOnlyTools.add(tool.name);
@@ -192,6 +208,7 @@ export function createBridge(options: BridgeOptions): Server {
   });
 
   server.setRequestHandler(CallToolRequestSchema, async (request, extra) => {
+    if (catalog) return { isError: true, content: [{ type: 'text', text: authMessage(options.apiKey) }] };
     try {
       return (await send(request, extra)) as never;
     } catch (error) {
@@ -202,10 +219,10 @@ export function createBridge(options: BridgeOptions): Server {
     }
   });
 
-  server.setRequestHandler(ListResourcesRequestSchema, (r, e) => forward(r, e) as never);
-  server.setRequestHandler(ListResourceTemplatesRequestSchema, (r, e) => forward(r, e) as never);
+  server.setRequestHandler(ListResourcesRequestSchema, (r, e) => (catalog ? { resources: catalog.resources } : (forward(r, e) as never)));
+  server.setRequestHandler(ListResourceTemplatesRequestSchema, (r, e) => (catalog ? { resourceTemplates: [] } : (forward(r, e) as never)));
   server.setRequestHandler(ReadResourceRequestSchema, (r, e) => forward(r, e) as never);
-  server.setRequestHandler(ListPromptsRequestSchema, (r, e) => forward(r, e) as never);
+  server.setRequestHandler(ListPromptsRequestSchema, (r, e) => (catalog ? { prompts: catalog.prompts } : (forward(r, e) as never)));
   server.setRequestHandler(GetPromptRequestSchema, (r, e) => forward(r, e) as never);
   server.setRequestHandler(CompleteRequestSchema, (r, e) => forward(r, e) as never);
 
@@ -216,7 +233,7 @@ export function createBridge(options: BridgeOptions): Server {
 export function authMessage(apiKey: string | undefined): string {
   return apiKey
     ? `QRX rejected the API key in QRX_API_KEY. Check it is current at ${KEYS_URL}, then restart the MCP server.`
-    : `This tool needs a QRX API key. Create one at ${KEYS_URL}, set it as QRX_API_KEY in your MCP client's config for this server, then restart it.`;
+    : `Set QRX_API_KEY (create one at ${KEYS_URL}) in your MCP client's config for this server, then restart it.`;
 }
 
 function isUnauthorized(error: unknown): boolean {

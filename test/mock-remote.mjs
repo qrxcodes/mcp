@@ -1,5 +1,6 @@
-// A stand-in for the hosted QRX MCP server: stateless Streamable HTTP, bearer-key auth on account tools,
-// an MCP Apps view resource, and switches for dropping connections.
+// A stand-in for the hosted QRX MCP server: stateless Streamable HTTP, bearer-key auth on account tools
+// (or on everything, with requireAuth), an MCP Apps view resource, a public server card,
+// and switches for dropping connections.
 import { webcrypto } from 'node:crypto';
 import { createServer } from 'node:http';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
@@ -113,10 +114,18 @@ function buildServer(initParams) {
   return server;
 }
 
-export async function startMockRemote() {
-  const state = { requests: [], dropNext: 0, dropped: [] };
+export const CARD_PATH = '/.well-known/mcp/server-card.json';
+
+export async function startMockRemote({ requireAuth = false, card } = {}) {
+  const state = { requests: [], dropNext: 0, dropped: [], card };
 
   const http = createServer(async (req, res) => {
+    if (req.method === 'GET' && req.url === CARD_PATH) {
+      res.writeHead(state.card ? 200 : 404, { 'content-type': 'application/json' });
+      res.end(state.card ? JSON.stringify(state.card) : '{"error":"not found"}');
+      return;
+    }
+
     const chunks = [];
     for await (const chunk of req) chunks.push(chunk);
     const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : undefined;
@@ -131,10 +140,11 @@ export async function startMockRemote() {
     }
 
     const auth = req.headers.authorization;
-    const needsKey = body?.method === 'tools/call' && !PUBLIC_TOOLS.has(body.params?.name);
+    const needsKey = requireAuth || (body?.method === 'tools/call' && !PUBLIC_TOOLS.has(body.params?.name));
     if (needsKey && auth !== `Bearer ${API_KEY}`) {
-      res.writeHead(401, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, error: { code: -32001, message: 'Connect a QRX account to use this tool.' } }));
+      const metadata = `http://${req.headers.host}/.well-known/oauth-protected-resource/mcp`;
+      res.writeHead(401, { 'content-type': 'application/json', 'www-authenticate': `Bearer resource_metadata="${metadata}"` });
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: body?.id ?? null, error: { code: -32001, message: 'Connect a QRX account to use this tool.' } }));
       return;
     }
 

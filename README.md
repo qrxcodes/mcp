@@ -22,7 +22,7 @@ Requires Node.js 18 or later. Listed in the official MCP Registry as `codes.qrx/
 2. Create a key at [qrx.codes/developers/keys](https://qrx.codes/developers/keys). It starts with `qrx_`.
 3. Give it to the server as the `QRX_API_KEY` environment variable, as in the examples below.
 
-Without a key the server still starts: clients can list the tools and call `list_styles`, and every other tool returns an error asking you to set `QRX_API_KEY`.
+Without a key the server still starts and clients can list the tools (from QRX's public server card, or a copy bundled with this package). Calling a tool returns an error asking you to set `QRX_API_KEY`.
 
 ## Install
 
@@ -191,18 +191,19 @@ Run `npx -y @qrxcodes/mcp` with `QRX_API_KEY` in its environment. On Windows, cl
 |---|---|---|
 | `QRX_API_KEY` | none | Your QRX API key, sent to the remote server as `Authorization: Bearer <key>` |
 | `QRX_MCP_URL` | `https://qrx.codes/mcp` | The remote server to forward to, for example a staging server |
+| `QRX_MCP_SERVER_CARD_URL` | `/.well-known/mcp/server-card.json` on the `QRX_MCP_URL` origin | The public server card, used to list the tools when there is no valid key |
 
 ## Tools
 
-| Tool | What it does | Needs a key |
-|---|---|---|
-| `generate_qr_code` | Starts a new art QR code from a prompt and a link. Returns the code's id straight away. | Yes |
-| `get_qr_code` | Gets a code's status, image and short link, waiting briefly while it is painted. | Yes |
-| `list_qr_codes` | Lists your codes, newest first. | Yes |
-| `change_qr_code_destination` | Points an existing code at a new link without reprinting it (Starter plan). | Yes |
-| `get_account` | Shows your plan and how many codes are left today. | Yes |
-| `get_profile` | Shows which QRX account is connected. | Yes |
-| `list_styles` | Lists the looks you can pass to `generate_qr_code`. | No |
+| Tool | What it does |
+|---|---|
+| `generate_qr_code` | Starts a new art QR code from a prompt and a link. Returns the code's id straight away. |
+| `get_qr_code` | Gets a code's status, image and short link, waiting briefly while it is painted. |
+| `list_qr_codes` | Lists your codes, newest first. |
+| `change_qr_code_destination` | Points an existing code at a new link without reprinting it (Starter plan). |
+| `get_account` | Shows your plan and how many codes are left today. |
+| `get_profile` | Shows which QRX account is connected. |
+| `list_styles` | Lists the looks you can pass to `generate_qr_code`. |
 
 The tool list, input and output schemas and annotations come from the remote server at runtime, so they always match the hosted service. Clients that support MCP Apps also get the interactive code view (`ui://qrx/code-v1.html`).
 
@@ -220,6 +221,8 @@ It sends requests only to the configured URL. Each request carries your API key 
 npm install
 npm test      # builds, then runs the tests against a local mock of the remote server
 ```
+
+See [RELEASING.md](RELEASING.md) for publishing a new version.
 
 Run your build against QRX with the MCP Inspector:
 
