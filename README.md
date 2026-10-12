@@ -200,7 +200,7 @@ Run `npx -y @qrxcodes/mcp` with `QRX_API_KEY` in its environment. On Windows, cl
 | `generate_qr_code` | Starts a new art QR code from a prompt and a link. Returns the code's id straight away. |
 | `get_qr_code` | Gets a code's status, image and short link, waiting briefly while it is painted. |
 | `list_qr_codes` | Lists your codes, newest first. |
-| `change_qr_code_destination` | Points an existing code at a new link without reprinting it (Starter plan). |
+| `change_qr_code_destination` | Points an existing code at a new link without reprinting it (on a paid plan). |
 | `get_account` | Shows your plan and how many codes are left today. |
 | `get_profile` | Shows which QRX account is connected. |
 | `list_styles` | Lists the looks you can pass to `generate_qr_code`. |
